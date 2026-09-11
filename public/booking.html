@@ -26,4 +26,99 @@
     <label for="phone">Phone number</label>
     <input id="phone" type="tel" required>
 
-    <
+    <label for="testType">Test</label>
+    <select id="testType" required>
+      <option value="">Select a test</option>
+      <option>Complete blood count (CBC)</option>
+      <option>Lipid profile</option>
+      <option>Thyroid panel</option>
+      <option>Diabetes panel (HbA1c)</option>
+      <option>Full body checkup</option>
+    </select>
+
+    <label for="slot">Preferred date and time</label>
+    <input id="slot" type="datetime-local" required>
+
+    <label for="address">Address (for our records)</label>
+    <textarea id="address" placeholder="Flat / house number, building, street, landmark"></textarea>
+
+    <label for="notes">Anything the technician should know (optional)</label>
+    <textarea id="notes" placeholder="e.g. gate code, fasting since morning"></textarea>
+
+    <p id="form-error" class="muted" style="color:#C0392B; display:none;"></p>
+
+    <button type="submit" class="btn-primary" style="margin-top:16px;">Confirm booking</button>
+  </form>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const DEFAULT_CENTER = [28.6139, 77.2090]; // fallback: New Delhi - change to your city
+  const map = L.map('map').setView(DEFAULT_CENTER, 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  const marker = L.marker(DEFAULT_CENTER, { draggable: true }).addTo(map);
+  let currentLatLng = { lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] };
+
+  marker.on('dragend', () => {
+    const pos = marker.getLatLng();
+    currentLatLng = { lat: pos.lat, lng: pos.lng };
+  });
+
+  map.on('click', (e) => {
+    marker.setLatLng(e.latlng);
+    currentLatLng = { lat: e.latlng.lat, lng: e.latlng.lng };
+  });
+
+  document.getElementById('use-location').addEventListener('click', () => {
+    if (!navigator.geolocation) {
+      alert('Location access is not available on this device/browser.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const latlng = [pos.coords.latitude, pos.coords.longitude];
+        map.setView(latlng, 17);
+        marker.setLatLng(latlng);
+        currentLatLng = { lat: latlng[0], lng: latlng[1] };
+      },
+      () => alert('Could not get your location. Please drag the pin to your address instead.'),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+
+  document.getElementById('booking-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorEl = document.getElementById('form-error');
+    errorEl.style.display = 'none';
+
+    const payload = {
+      customerName: document.getElementById('customerName').value.trim(),
+      phone: document.getElementById('phone').value.trim(),
+      testType: document.getElementById('testType').value,
+      slot: document.getElementById('slot').value,
+      address: document.getElementById('address').value.trim(),
+      notes: document.getElementById('notes').value.trim(),
+      lat: currentLatLng.lat,
+      lng: currentLatLng.lng
+    };
+
+    try {
+      const res = await fetch('/api/bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error('Booking failed.');
+      const booking = await res.json();
+      window.location.href = `track.html?id=${booking.id}`;
+    } catch (err) {
+      errorEl.textContent = 'Something went wrong. Please try again.';
+      errorEl.style.display = 'block';
+    }
+  });
+</script>
+</body>
+</html>
