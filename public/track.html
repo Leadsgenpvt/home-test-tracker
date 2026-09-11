@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Track your sample collection</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&family=Roboto+Slab:wght@500&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+  <div class="brand"><span class="dot"></span><h1>Your Diagnostic Centre</h1></div>
+
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between;">
+      <div>
+        <p class="muted" id="test-name">Loading booking&hellip;</p>
+        <p style="font-weight:500; margin:2px 0 0;" id="booking-id"></p>
+      </div>
+      <span class="badge pending" id="status-badge"><span class="pulse"></span><span id="status-text">Confirmed</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="map" class="map tall"></div>
+  </div>
+
+  <div class="card">
+    <p class="muted" id="eta-label">Waiting for technician to start the trip</p>
+    <p class="eta" id="eta-value">&mdash;</p>
+  </div>
+
+  <div class="card" id="technician-card" style="display:none;">
+    <div style="display:flex; align-items:center; gap:12px;">
+      <div style="width:40px; height:40px; border-radius:50%; background:var(--teal-light); color:var(--teal); display:flex; align-items:center; justify-content:center; font-weight:500;" id="tech-initials"></div>
+      <div>
+        <p style="font-weight:500; margin:0;" id="tech-name"></p>
+        <p class="muted" style="margin:2px 0 0;">Your assigned technician</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="timeline">
+      <div class="step done" id="step-confirmed"><div class="step-dot"></div><p>Confirmed</p></div>
+      <div class="line" id="line-1"></div>
+      <div class="step" id="step-on_the_way"><div class="step-dot"></div><p>On the way</p></div>
+      <div class="line" id="line-2"></div>
+      <div class="step" id="step-arrived"><div class="step-dot"></div><p>Arrived</p></div>
+      <div class="line" id="line-3"></div>
+      <div class="step" id="step-collected"><div class="step-dot"></div><p>Sample collected</p></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const bookingId = params.get('id');
+  if (!bookingId) document.body.innerHTML = '<div class="page"><p>No booking found. Please use the tracking link sent to you.</p></div>';
+
+  const map = L.map('map');
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  let homeMarker, techMarker;
+  let homeLatLng;
+
+  const statusLabels = {
+    confirmed: 'Confirmed',
+    on_the_way: 'On the way',
+    arrived: 'Arrived',
+    collected: 'Sample collected'
+  };
+  const stepOrder = ['confirmed', 'on_the_way', 'arrived', 'collected'];
+
+  function haversineKm(a, b) {
+    const R = 6371;
+    const dLat = (b.lat - a.lat) * Math.PI / 180;
+    const dLng = (b.lng - a.lng) * Math.PI / 180;
+    const lat1 = a.lat * Math.PI / 180, lat2 = b.lat * Math.PI / 180;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+
+  function renderTimeline(status) {
+    const idx = stepOrder.indexOf(status);
+    stepOrder.forEach((s, i) => {
+      const el = document.getElementById(`step-${s}`);
+      el.classList.toggle('done', i <= idx);
+      el.classList.toggle('active', i === idx);
+    });
+    ['line-1', 'line-2', 'line-3'].forEach((id, i) => {
+      document.getElementById(id).classList.toggle('done', i < idx);
+    });
+
+    const badge = document.getElementById('status-badge');
+    document.getElementById('status-text').textContent = statusLabels[status] || status;
+    badge.className = 'badge ' + (status === 'collected' ? 'done' : status === 'confirmed' ? 'pending' : 'live');
+  }
+
+  function applyBooking(booking) {
+    document.getElementById('test-name').textContent = booking.testType;
+    document.getElementById('booking-id').textContent = `Booking #${booking.id}`;
+    renderTimeline(booking.status);
+
+    homeLatLng = { lat: booking.lat, lng: booking.lng };
+    if (!homeMarker) {
+      homeMarker = L.marker([booking.lat, booking.lng]).addTo(map).bindPopup('Your location');
+      map.setView([booking.lat, booking.lng], 14);
+    }
+
+    if (booking.technicianName) {
+      document.getElementById('technician-card').style.display = 'block';
+      document.getElementById('tech-name').textContent = booking.technicianName;
+      document.getElementById('tech-initials').textContent = booking.technicianName.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+    }
+
+    if (booking.status === 'arrived') {
+      document.getElementById('eta-label').textContent = 'Status';
+      document.getElementById('eta-value').textContent = 'Arrived';
+    } else if (booking.status === 'collected') {
+      document.getElementById('eta-label').textContent = 'Status';
+      document.getElementById('eta-value').textContent = 'Sample collected';
+    } else if (booking.technicianLocation) {
+      updateEtaAndMarker(booking.technicianLocation);
+    }
+  }
+
+  function updateEtaAndMarker(loc) {
+    if (!techMarker) {
+      const icon = L.divIcon({ className: '', html: '<div style="width:14px;height:14px;border-radius:50%;background:#0F6E56;border:3px solid #E1F5EE;"></div>' });
+      techMarker = L.marker([loc.lat, loc.lng], { icon }).addTo(map);
+    } else {
+      techMarker.setLatLng([loc.lat, loc.lng]);
+    }
+
+    const group = L.featureGroup([homeMarker, techMarker]);
+    map.fitBounds(group.getBounds().pad(0.4));
+
+    if (homeLatLng) {
+      const km = haversineKm(loc, homeLatLng);
+      const avgSpeedKmh = 22; // rough urban average, tune per city
+      const minutes = Math.max(1, Math.round((km / avgSpeedKmh) * 60));
+      document.getElementById('eta-label').textContent = 'Arriving in';
+      document.getElementById('eta-value').textContent = `${minutes} min`;
+    }
+  }
+
+  async function init() {
+    const res = await fetch(`/api/bookings/${bookingId}`);
+    if (!res.ok) {
+      document.body.innerHTML = '<div class="page"><p>Booking not found.</p></div>';
+      return;
+    }
+    const booking = await res.json();
+    applyBooking(booking);
+
+    const socket = io();
+    socket.emit('join', bookingId);
+    socket.on('location', updateEtaAndMarker);
+    socket.on('booking-updated', applyBooking);
+  }
+
+  if (bookingId) init();
+</script>
+</body>
+</html>
