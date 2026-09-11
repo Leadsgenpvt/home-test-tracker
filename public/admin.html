@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dispatch dashboard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page wide">
+  <div class="brand"><span class="dot"></span><h1>Dispatch dashboard</h1></div>
+
+  <div class="card">
+    <div id="map" class="map tall"></div>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>Test</th>
+          <th>Slot</th>
+          <th>Status</th>
+          <th>Technician</th>
+          <th>Track</th>
+        </tr>
+      </thead>
+      <tbody id="bookings-body"></tbody>
+    </table>
+    <div id="empty" class="empty" style="display:none;">No bookings yet. Share your booking page link with customers to get started.</div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const map = L.map('map').setView([28.6139, 77.2090], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  let mapMarkers = [];
+  const statusLabels = {
+    confirmed: 'Confirmed',
+    on_the_way: 'On the way',
+    arrived: 'Arrived',
+    collected: 'Sample collected'
+  };
+
+  function badgeClass(status) {
+    if (status === 'collected') return 'done';
+    if (status === 'confirmed') return 'pending';
+    return 'live';
+  }
+
+  async function assign(id, currentName) {
+    const name = prompt('Technician name', currentName || '');
+    if (!name) return;
+    await fetch(`/api/bookings/${id}/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ technicianName: name })
+    });
+    load();
+  }
+
+  async function load() {
+    const res = await fetch('/api/bookings');
+    const bookings = await res.json();
+
+    const tbody = document.getElementById('bookings-body');
+    document.getElementById('empty').style.display = bookings.length ? 'none' : 'block';
+
+    tbody.innerHTML = bookings.map(b => `
+      <tr>
+        <td>${b.customerName}<br><span class="muted">${b.phone}</span></td>
+        <td>${b.testType}</td>
+        <td>${b.slot ? new Date(b.slot).toLocaleString() : '&mdash;'}</td>
+        <td><span class="badge ${badgeClass(b.status)}">${statusLabels[b.status]}</span></td>
+        <td>
+          <div class="row-actions">
+            <span>${b.technicianName || 'Unassigned'}</span>
+            <button class="btn-secondary" onclick="assign('${b.id}', '${b.technicianName || ''}')">Assign</button>
+          </div>
+        </td>
+        <td><a href="track.html?id=${b.id}" target="_blank">Open</a></td>
+      </tr>
+    `).join('');
+
+    mapMark
