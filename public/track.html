@@ -6,7 +6,11 @@
 <title>Track your sample collection</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&family=Roboto+Slab:wght@500&display=swap">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css">
 <link rel="stylesheet" href="style.css">
+<style>
+  .leaflet-routing-container { display: none; }
+</style>
 </head>
 <body>
 <div class="page">
@@ -55,6 +59,7 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
 <script src="/socket.io/socket.io.js"></script>
 <script>
   const params = new URLSearchParams(window.location.search);
@@ -66,7 +71,7 @@
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map);
 
-  let homeMarker, techMarker;
+  let homeMarker, techMarker, routingControl;
   let homeLatLng;
 
   const statusLabels = {
@@ -130,6 +135,48 @@
     }
   }
 
+  function fallbackEta(loc) {
+    if (!homeLatLng) return;
+    const km = haversineKm(loc, homeLatLng);
+    const avgSpeedKmh = 22;
+    const minutes = Math.max(1, Math.round((km / avgSpeedKmh) * 60));
+    document.getElementById('eta-label').textContent = 'Arriving in';
+    document.getElementById('eta-value').textContent = `${minutes} min`;
+  }
+
+  function updateRoute(loc) {
+    if (!homeLatLng) return;
+
+    if (!routingControl) {
+      routingControl = L.Routing.control({
+        waypoints: [
+          L.latLng(loc.lat, loc.lng),
+          L.latLng(homeLatLng.lat, homeLatLng.lng)
+        ],
+        router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
+        lineOptions: { styles: [{ color: '#0F6E56', weight: 5, opacity: 0.85 }] },
+        show: false,
+        addWaypoints: false,
+        draggableWaypoints: false,
+        fitSelectedRoutes: false,
+        createMarker: () => null
+      })
+        .on('routesfound', (e) => {
+          const summary = e.routes[0].summary;
+          const minutes = Math.max(1, Math.round(summary.totalTime / 60));
+          document.getElementById('eta-label').textContent = 'Arriving in';
+          document.getElementById('eta-value').textContent = `${minutes} min`;
+        })
+        .on('routingerror', () => fallbackEta(loc))
+        .addTo(map);
+    } else {
+      routingControl.setWaypoints([
+        L.latLng(loc.lat, loc.lng),
+        L.latLng(homeLatLng.lat, homeLatLng.lng)
+      ]);
+    }
+  }
+
   function updateEtaAndMarker(loc) {
     if (!techMarker) {
       const icon = L.divIcon({ className: '', html: '<div style="width:14px;height:14px;border-radius:50%;background:#0F6E56;border:3px solid #E1F5EE;"></div>' });
@@ -138,16 +185,11 @@
       techMarker.setLatLng([loc.lat, loc.lng]);
     }
 
+    fallbackEta(loc);
+    updateRoute(loc);
+
     const group = L.featureGroup([homeMarker, techMarker]);
     map.fitBounds(group.getBounds().pad(0.4));
-
-    if (homeLatLng) {
-      const km = haversineKm(loc, homeLatLng);
-      const avgSpeedKmh = 22; // rough urban average, tune per city
-      const minutes = Math.max(1, Math.round((km / avgSpeedKmh) * 60));
-      document.getElementById('eta-label').textContent = 'Arriving in';
-      document.getElementById('eta-value').textContent = `${minutes} min`;
-    }
   }
 
   async function init() {
