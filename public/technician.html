@@ -1,0 +1,123 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Technician app</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+  <div class="brand"><span class="dot"></span><h1>Technician app</h1></div>
+
+  <div class="card">
+    <label for="booking-select">Your assigned pickups</label>
+    <select id="booking-select"></select>
+  </div>
+
+  <div id="details" class="card" style="display:none;">
+    <p class="muted" id="d-test"></p>
+    <p style="font-weight:500; margin:4px 0 2px;" id="d-name"></p>
+    <p class="muted" id="d-address"></p>
+    <p class="muted" id="d-notes"></p>
+
+    <div style="margin-top:16px; display:flex; flex-direction:column; gap:10px;">
+      <button id="start-trip" class="btn-primary">Start trip</button>
+      <button id="mark-arrived" class="btn-secondary" style="display:none;">Mark arrived</button>
+      <button id="mark-collected" class="btn-secondary" style="display:none;">Mark sample collected</button>
+    </div>
+
+    <p class="muted" id="gps-status" style="margin-top:14px;"></p>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const select = document.getElementById('booking-select');
+  const socket = io();
+  let watchId = null;
+  let activeBooking = null;
+
+  async function loadBookings() {
+    const res = await fetch('/api/bookings');
+    const bookings = await res.json();
+    const pending = bookings.filter(b => b.status !== 'collected');
+
+    select.innerHTML = '<option value="">Select a booking</option>' +
+      pending.map(b => `<option value="${b.id}">${b.customerName} &mdash; ${b.testType} (${b.slot || 'no slot set'})</option>`).join('');
+  }
+
+  function showBooking(b) {
+    activeBooking = b;
+    document.getElementById('details').style.display = 'block';
+    document.getElementById('d-test').textContent = b.testType;
+    document.getElementById('d-name').textContent = b.customerName + ' &middot; ' + b.phone;
+    document.getElementById('d-name').innerHTML = `${b.customerName} &middot; ${b.phone}`;
+    document.getElementById('d-address').textContent = b.address || 'No address notes given &mdash; use the map pin.';
+    document.getElementById('d-notes').textContent = b.notes ? `Note: ${b.notes}` : '';
+
+    const startBtn = document.getElementById('start-trip');
+    const arrivedBtn = document.getElementById('mark-arrived');
+    const collectedBtn = document.getElementById('mark-collected');
+
+    startBtn.style.display = b.status === 'confirmed' ? 'block' : 'none';
+    arrivedBtn.style.display = b.status === 'on_the_way' ? 'block' : 'none';
+    collectedBtn.style.display = b.status === 'arrived' ? 'block' : 'none';
+
+    socket.emit('join', b.id);
+  }
+
+  select.addEventListener('change', async () => {
+    if (!select.value) { document.getElementById('details').style.display = 'none'; return; }
+    const res = await fetch(`/api/bookings/${select.value}`);
+    const b = await res.json();
+    showBooking(b);
+  });
+
+  async function setStatus(status) {
+    await fetch(`/api/bookings/${activeBooking.id}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+    const res = await fetch(`/api/bookings/${activeBooking.id}`);
+    showBooking(await res.json());
+  }
+
+  document.getElementById('start-trip').addEventListener('click', () => {
+    if (!navigator.geolocation) {
+      alert('This device does not support location sharing.');
+      return;
+    }
+    setStatus('on_the_way');
+
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        socket.emit('location', {
+          bookingId: activeBooking.id,
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude
+        });
+        document.getElementById('gps-status').textContent =
+          `Sharing your location \u2014 last sent at ${new Date().toLocaleTimeString()}`;
+      },
+      (err) => {
+        document.getElementById('gps-status').textContent = 'Location error: ' + err.message;
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+    );
+  });
+
+  document.getElementById('mark-arrived').addEventListener('click', () => setStatus('arrived'));
+
+  document.getElementById('mark-collected').addEventListener('click', () => {
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    setStatus('collected').then(loadBookings);
+  });
+
+  loadBookings();
+</script>
+</body>
+</html>
