@@ -37,13 +37,13 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/socket.io/socket.io.js"></script>
 <script>
-  const map = L.map('map').setView([28.6139, 77.2090], 12);
+  var map = L.map('map').setView([28.6139, 77.2090], 12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors'
+    attribution: 'OpenStreetMap contributors'
   }).addTo(map);
 
-  let mapMarkers = [];
-  const statusLabels = {
+  var mapMarkers = [];
+  var statusLabels = {
     confirmed: 'Confirmed',
     on_the_way: 'On the way',
     arrived: 'Arrived',
@@ -57,9 +57,9 @@
   }
 
   async function assign(id, currentName) {
-    const name = prompt('Technician name', currentName || '');
+    var name = prompt('Technician name', currentName || '');
     if (!name) return;
-    await fetch(`/api/bookings/${id}/assign`, {
+    await fetch('/api/bookings/' + id + '/assign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ technicianName: name })
@@ -68,26 +68,41 @@
   }
 
   async function load() {
-    const res = await fetch('/api/bookings');
-    const bookings = await res.json();
+    var res = await fetch('/api/bookings');
+    var bookings = await res.json();
 
-    const tbody = document.getElementById('bookings-body');
+    var tbody = document.getElementById('bookings-body');
     document.getElementById('empty').style.display = bookings.length ? 'none' : 'block';
 
-    tbody.innerHTML = bookings.map(b => `
-      <tr>
-        <td>${b.customerName}<br><span class="muted">${b.phone}</span></td>
-        <td>${b.testType}</td>
-        <td>${b.slot ? new Date(b.slot).toLocaleString() : '&mdash;'}</td>
-        <td><span class="badge ${badgeClass(b.status)}">${statusLabels[b.status]}</span></td>
-        <td>
-          <div class="row-actions">
-            <span>${b.technicianName || 'Unassigned'}</span>
-            <button class="btn-secondary" onclick="assign('${b.id}', '${b.technicianName || ''}')">Assign</button>
-          </div>
-        </td>
-        <td><a href="track.html?id=${b.id}" target="_blank">Open</a></td>
-      </tr>
-    `).join('');
+    tbody.innerHTML = bookings.map(function(b) {
+      return '<tr>' +
+        '<td>' + b.customerName + '<br><span class="muted">' + b.phone + '</span></td>' +
+        '<td>' + b.testType + '</td>' +
+        '<td>' + (b.slot ? new Date(b.slot).toLocaleString() : '-') + '</td>' +
+        '<td><span class="badge ' + badgeClass(b.status) + '">' + statusLabels[b.status] + '</span></td>' +
+        '<td><div class="row-actions"><span>' + (b.technicianName || 'Unassigned') + '</span>' +
+        '<button class="btn-secondary" onclick="assign(\'' + b.id + '\', \'' + (b.technicianName || '') + '\')">Assign</button></div></td>' +
+        '<td><a href="track.html?id=' + b.id + '" target="_blank">Open</a></td>' +
+        '</tr>';
+    }).join('');
 
-    mapMark
+    mapMarkers.forEach(function(m) { map.removeLayer(m); });
+    mapMarkers = bookings.map(function(b) {
+      var marker = L.marker([b.lat, b.lng]).addTo(map);
+      marker.bindPopup(b.customerName + '<br>' + b.testType + '<br>' + statusLabels[b.status]);
+      return marker;
+    });
+
+    if (mapMarkers.length) {
+      var group = L.featureGroup(mapMarkers);
+      map.fitBounds(group.getBounds().pad(0.3));
+    }
+  }
+
+  var socket = io();
+  socket.on('bookings-updated', load);
+
+  load();
+</script>
+</body>
+</html>
