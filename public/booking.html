@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Book a home sample collection</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&family=Roboto+Slab:wght@500&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+  <div class="brand"><span class="dot"></span><h1>Your Diagnostic Centre &mdash; home collection</h1></div>
+
+  <div class="card">
+    <p class="muted" style="margin-bottom:12px;">Confirm your exact pickup location first &mdash; this is how our technician finds you.</p>
+    <button id="use-location" class="btn-secondary" style="width:100%; margin-bottom:10px;">Use my current location</button>
+    <div id="map" class="map tall"></div>
+    <p class="muted" style="margin-top:10px;">Drag the pin if it isn't exactly on your door.</p>
+  </div>
+
+  <form id="booking-form" class="card">
+    <label for="customerName">Full name</label>
+    <input id="customerName" required>
+
+    <label for="phone">Phone number</label>
+    <input id="phone" type="tel" required>
+
+    <
