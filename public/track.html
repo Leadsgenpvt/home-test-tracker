@@ -3,211 +3,121 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Track your sample collection</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&family=Roboto+Slab:wght@500&display=swap">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css">
+<title>Technician app</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&display=swap">
 <link rel="stylesheet" href="style.css">
-<style>
-  .leaflet-routing-container { display: none; }
-</style>
 </head>
 <body>
 <div class="page">
-  <div class="brand"><span class="dot"></span><h1>Your Diagnostic Centre</h1></div>
+  <div class="brand"><span class="dot"></span><h1>Technician app</h1></div>
 
   <div class="card">
-    <div style="display:flex; align-items:center; justify-content:space-between;">
-      <div>
-        <p class="muted" id="test-name">Loading booking&hellip;</p>
-        <p style="font-weight:500; margin:2px 0 0;" id="booking-id"></p>
-      </div>
-      <span class="badge pending" id="status-badge"><span class="pulse"></span><span id="status-text">Confirmed</span></span>
+    <label for="booking-select">Your assigned pickups</label>
+    <select id="booking-select"></select>
+  </div>
+
+  <div id="details" class="card" style="display:none;">
+    <p class="muted" id="d-test"></p>
+    <p style="font-weight:500; margin:4px 0 2px;" id="d-name"></p>
+    <p class="muted" id="d-address"></p>
+    <p class="muted" id="d-notes"></p>
+    <a id="navigate-link" href="#" target="_blank" style="display:block; text-align:center; margin-top:10px; padding:10px; border:1px solid var(--border); border-radius:8px; text-decoration:none; color:var(--teal); font-weight:500;">Navigate to customer</a>
+
+    <div style="margin-top:16px; display:flex; flex-direction:column; gap:10px;">
+      <button id="start-trip" class="btn-primary">Start trip</button>
+      <button id="mark-arrived" class="btn-secondary" style="display:none;">Mark arrived</button>
+      <button id="mark-collected" class="btn-secondary" style="display:none;">Mark sample collected</button>
     </div>
-  </div>
 
-  <div class="card">
-    <div id="map" class="map tall"></div>
-  </div>
-
-  <div class="card">
-    <p class="muted" id="eta-label">Waiting for technician to start the trip</p>
-    <p class="eta" id="eta-value">&mdash;</p>
-  </div>
-
-  <div class="card" id="technician-card" style="display:none;">
-    <div style="display:flex; align-items:center; gap:12px;">
-      <div style="width:40px; height:40px; border-radius:50%; background:var(--teal-light); color:var(--teal); display:flex; align-items:center; justify-content:center; font-weight:500;" id="tech-initials"></div>
-      <div>
-        <p style="font-weight:500; margin:0;" id="tech-name"></p>
-        <p class="muted" style="margin:2px 0 0;">Your assigned technician</p>
-      </div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="timeline">
-      <div class="step done" id="step-confirmed"><div class="step-dot"></div><p>Confirmed</p></div>
-      <div class="line" id="line-1"></div>
-      <div class="step" id="step-on_the_way"><div class="step-dot"></div><p>On the way</p></div>
-      <div class="line" id="line-2"></div>
-      <div class="step" id="step-arrived"><div class="step-dot"></div><p>Arrived</p></div>
-      <div class="line" id="line-3"></div>
-      <div class="step" id="step-collected"><div class="step-dot"></div><p>Sample collected</p></div>
-    </div>
+    <p class="muted" id="gps-status" style="margin-top:14px;"></p>
   </div>
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
 <script src="/socket.io/socket.io.js"></script>
 <script>
-  const params = new URLSearchParams(window.location.search);
-  const bookingId = params.get('id');
-  if (!bookingId) document.body.innerHTML = '<div class="page"><p>No booking found. Please use the tracking link sent to you.</p></div>';
+  const select = document.getElementById('booking-select');
+  const socket = io();
+  let watchId = null;
+  let activeBooking = null;
 
-  const map = L.map('map');
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map);
+  async function loadBookings() {
+    const res = await fetch('/api/bookings');
+    const bookings = await res.json();
+    const pending = bookings.filter(b => b.status !== 'collected');
 
-  let homeMarker, techMarker, routingControl;
-  let homeLatLng;
-
-  const statusLabels = {
-    confirmed: 'Confirmed',
-    on_the_way: 'On the way',
-    arrived: 'Arrived',
-    collected: 'Sample collected'
-  };
-  const stepOrder = ['confirmed', 'on_the_way', 'arrived', 'collected'];
-
-  function haversineKm(a, b) {
-    const R = 6371;
-    const dLat = (b.lat - a.lat) * Math.PI / 180;
-    const dLng = (b.lng - a.lng) * Math.PI / 180;
-    const lat1 = a.lat * Math.PI / 180, lat2 = b.lat * Math.PI / 180;
-    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-    return 2 * R * Math.asin(Math.sqrt(h));
+    select.innerHTML = '<option value="">Select a booking</option>' +
+      pending.map(b => `<option value="${b.id}">${b.customerName} &mdash; ${b.testType} (${b.slot || 'no slot set'})</option>`).join('');
   }
 
-  function renderTimeline(status) {
-    const idx = stepOrder.indexOf(status);
-    stepOrder.forEach((s, i) => {
-      const el = document.getElementById(`step-${s}`);
-      el.classList.toggle('done', i <= idx);
-      el.classList.toggle('active', i === idx);
+  function showBooking(b) {
+    activeBooking = b;
+    document.getElementById('details').style.display = 'block';
+    document.getElementById('d-test').textContent = b.testType;
+    document.getElementById('d-name').innerHTML = `${b.customerName} &middot; ${b.phone}`;
+    document.getElementById('d-address').textContent = b.address || 'No address notes given &mdash; use Navigate below.';
+    document.getElementById('d-notes').textContent = b.notes ? `Note: ${b.notes}` : '';
+    document.getElementById('navigate-link').href = `https://www.google.com/maps/dir/?api=1&destination=${b.lat},${b.lng}`;
+
+    const startBtn = document.getElementById('start-trip');
+    const arrivedBtn = document.getElementById('mark-arrived');
+    const collectedBtn = document.getElementById('mark-collected');
+
+    startBtn.style.display = b.status === 'confirmed' ? 'block' : 'none';
+    arrivedBtn.style.display = b.status === 'on_the_way' ? 'block' : 'none';
+    collectedBtn.style.display = b.status === 'arrived' ? 'block' : 'none';
+
+    socket.emit('join', b.id);
+  }
+
+  select.addEventListener('change', async () => {
+    if (!select.value) { document.getElementById('details').style.display = 'none'; return; }
+    const res = await fetch(`/api/bookings/${select.value}`);
+    const b = await res.json();
+    showBooking(b);
+  });
+
+  async function setStatus(status) {
+    await fetch(`/api/bookings/${activeBooking.id}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
     });
-    ['line-1', 'line-2', 'line-3'].forEach((id, i) => {
-      document.getElementById(id).classList.toggle('done', i < idx);
-    });
-
-    const badge = document.getElementById('status-badge');
-    document.getElementById('status-text').textContent = statusLabels[status] || status;
-    badge.className = 'badge ' + (status === 'collected' ? 'done' : status === 'confirmed' ? 'pending' : 'live');
+    const res = await fetch(`/api/bookings/${activeBooking.id}`);
+    showBooking(await res.json());
   }
 
-  function applyBooking(booking) {
-    document.getElementById('test-name').textContent = booking.testType;
-    document.getElementById('booking-id').textContent = `Booking #${booking.id}`;
-    renderTimeline(booking.status);
-
-    homeLatLng = { lat: booking.lat, lng: booking.lng };
-    if (!homeMarker) {
-      homeMarker = L.marker([booking.lat, booking.lng]).addTo(map).bindPopup('Your location');
-      map.setView([booking.lat, booking.lng], 14);
-    }
-
-    if (booking.technicianName) {
-      document.getElementById('technician-card').style.display = 'block';
-      document.getElementById('tech-name').textContent = booking.technicianName;
-      document.getElementById('tech-initials').textContent = booking.technicianName.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
-    }
-
-    if (booking.status === 'arrived') {
-      document.getElementById('eta-label').textContent = 'Status';
-      document.getElementById('eta-value').textContent = 'Arrived';
-    } else if (booking.status === 'collected') {
-      document.getElementById('eta-label').textContent = 'Status';
-      document.getElementById('eta-value').textContent = 'Sample collected';
-    } else if (booking.technicianLocation) {
-      updateEtaAndMarker(booking.technicianLocation);
-    }
-  }
-
-  function fallbackEta(loc) {
-    if (!homeLatLng) return;
-    const km = haversineKm(loc, homeLatLng);
-    const avgSpeedKmh = 22;
-    const minutes = Math.max(1, Math.round((km / avgSpeedKmh) * 60));
-    document.getElementById('eta-label').textContent = 'Arriving in';
-    document.getElementById('eta-value').textContent = `${minutes} min`;
-  }
-
-  function updateRoute(loc) {
-    if (!homeLatLng) return;
-
-    if (!routingControl) {
-      routingControl = L.Routing.control({
-        waypoints: [
-          L.latLng(loc.lat, loc.lng),
-          L.latLng(homeLatLng.lat, homeLatLng.lng)
-        ],
-        router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
-        lineOptions: { styles: [{ color: '#0F6E56', weight: 5, opacity: 0.85 }] },
-        show: false,
-        addWaypoints: false,
-        draggableWaypoints: false,
-        fitSelectedRoutes: false,
-        createMarker: () => null
-      })
-        .on('routesfound', (e) => {
-          const summary = e.routes[0].summary;
-          const minutes = Math.max(1, Math.round(summary.totalTime / 60));
-          document.getElementById('eta-label').textContent = 'Arriving in';
-          document.getElementById('eta-value').textContent = `${minutes} min`;
-        })
-        .on('routingerror', () => fallbackEta(loc))
-        .addTo(map);
-    } else {
-      routingControl.setWaypoints([
-        L.latLng(loc.lat, loc.lng),
-        L.latLng(homeLatLng.lat, homeLatLng.lng)
-      ]);
-    }
-  }
-
-  function updateEtaAndMarker(loc) {
-    if (!techMarker) {
-      const icon = L.divIcon({ className: '', html: '<div style="width:14px;height:14px;border-radius:50%;background:#0F6E56;border:3px solid #E1F5EE;"></div>' });
-      techMarker = L.marker([loc.lat, loc.lng], { icon }).addTo(map);
-    } else {
-      techMarker.setLatLng([loc.lat, loc.lng]);
-    }
-
-    fallbackEta(loc);
-    updateRoute(loc);
-
-    const group = L.featureGroup([homeMarker, techMarker]);
-    map.fitBounds(group.getBounds().pad(0.4));
-  }
-
-  async function init() {
-    const res = await fetch(`/api/bookings/${bookingId}`);
-    if (!res.ok) {
-      document.body.innerHTML = '<div class="page"><p>Booking not found.</p></div>';
+  document.getElementById('start-trip').addEventListener('click', () => {
+    if (!navigator.geolocation) {
+      alert('This device does not support location sharing.');
       return;
     }
-    const booking = await res.json();
-    applyBooking(booking);
+    setStatus('on_the_way');
 
-    const socket = io();
-    socket.emit('join', bookingId);
-    socket.on('location', updateEtaAndMarker);
-    socket.on('booking-updated', applyBooking);
-  }
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        socket.emit('location', {
+          bookingId: activeBooking.id,
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude
+        });
+        document.getElementById('gps-status').textContent =
+          `Sharing your location \u2014 last sent at ${new Date().toLocaleTimeString()}`;
+      },
+      (err) => {
+        document.getElementById('gps-status').textContent = 'Location error: ' + err.message;
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+    );
+  });
 
-  if (bookingId) init();
+  document.getElementById('mark-arrived').addEventListener('click', () => setStatus('arrived'));
+
+  document.getElementById('mark-collected').addEventListener('click', () => {
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    setStatus('collected').then(loadBookings);
+  });
+
+  loadBookings();
 </script>
 </body>
 </html>
